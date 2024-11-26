@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "atap-annotator"
+version = "0.1.0"
+description = "A tool for annotating a corpus with categorical metadata"
+authors = ["Hamish Croser <hamish.croser@sydney.edu.au>"]
+readme = "README.md"
+documentation = "https://australian-text-analytics-platform.github.io/atap-annotator/DOCS.html"
+repository = "https://github.com/Australian-Text-Analytics-Platform/atap-annotator"
+license = "MIT"
+packages = [{include = "atap_annotator"}]
+exclude = ["*/.ipynb_checkpoints/*", "*log.txt"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+atap-corpus-loader = "~=1.8.0"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+jupyterlab = "~=4.0.0"
+ipywidgets = "~=8.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
