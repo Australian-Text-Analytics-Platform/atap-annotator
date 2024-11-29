@@ -7,11 +7,10 @@ from atap_corpus_loader import CorpusLoader
 from pandas import DataFrame, Series
 from panel import Row, Column
 from panel.layout import Divider
-from panel.widgets import Select, Button, TextInput
 
-from atap_annotator.annotator.CategoryControls import CategoryControls
+from atap_annotator.annotator.SettingsControls import SettingsControls
 from atap_annotator.annotator.Navigator import Navigator
-from atap_annotator.annotator.DocumentDisplay import DocumentDisplay
+from atap_annotator.annotator.MetaDisplay import MetaDisplay
 
 
 class DefaultCategoryMarker:
@@ -27,7 +26,7 @@ class DefaultCategoryMarker:
 class Annotator(pn.viewable.Viewer):
     MIN_DOCUMENT_IDX: int = 1
     DOC_COL: str = DataFrameCorpus._COL_DOC
-    DEFAULT_CATEGORIES_COL: str = 'annotation_category'
+    DEFAULT_CATEGORIES_COL: str = 'annotation'
 
     def log(self, msg: str, level: int):
         logger = logging.getLogger(self.logger_name)
@@ -37,44 +36,26 @@ class Annotator(pn.viewable.Viewer):
         super().__init__(**params)
         self.corpus_loader: CorpusLoader = corpus_loader
         self.logger_name: str = logger_name
+        self.corpus: Optional[DataFrameCorpus] = None
         self.corpus_df: Optional[DataFrame] = None
+        self.annotations: Optional[Series] = None
         self.curr_document_idx: int = self.MIN_DOCUMENT_IDX
-        self.default_categories: list[str] = []
         self.categories: list[str] = []
+        self.default_category: Optional[str] = None
 
-        self.corpus_selector = Select(name="Selected corpus", width=150)
-
-        self.show_save_options: bool = False
-        self.toggle_save_options_button = Button(name='Show save options',
-                                                 button_type="success", button_style="outline")
-        self.category_col_name_input = TextInput(name='New metadata name', value=self.DEFAULT_CATEGORIES_COL,
-                                                 placeholder=self.DEFAULT_CATEGORIES_COL)
-        self.corpus_name_input = TextInput(name='New corpus name')
-        self.save_corpus_button = Button(name="Save as corpus",
-                                         button_type="success", button_style="solid")
-        self.save_corpus_controls = Column(
-            self.toggle_save_options_button,
-            Row(self.category_col_name_input, self.corpus_name_input, self.save_corpus_button)
-        )
-
-        self.category_controls = CategoryControls(self)
-        self.document_display = DocumentDisplay(self)
+        self.meta_display = MetaDisplay(self)
         self.navigator = Navigator(self)
+        self.settings_controls = SettingsControls(self)
 
         self.panel = Row(
-            self.document_display,
-            Column(Row(self.corpus_selector,
-                       self.save_corpus_controls,
-                       self.category_controls),
+            self.meta_display,
+            Column(self.navigator,
                    Divider(),
-                   Row(self.navigator)),
+                   self.settings_controls),
             sizing_mode='stretch_width'
         )
 
-        self.corpus_selector.param.watch(self._update_selected_corpus, ['value'])
-        self.toggle_save_options_button.on_click(self._toggle_save_options)
-        self.save_corpus_button.on_click(self._save_as_corpus)
-        self.corpus_loader.register_event_callback("update", self._update_corpus_list)
+        self.corpus_loader.register_event_callback("update", self.update_displays)
 
     def __panel__(self):
         return self.panel.servable()
@@ -92,105 +73,91 @@ class Annotator(pn.viewable.Viewer):
         pn.state.notifications.success(success_msg, duration=3000)
 
     def update_displays(self):
-        self.category_controls.update_display()
-        self.document_display.update_display()
+        self.settings_controls.update_display()
+        self.meta_display.update_display()
         self.navigator.update_display()
 
-    def _set_save_options(self):
-        self.category_col_name_input.visible = self.show_save_options
-        self.corpus_name_input.visible = self.show_save_options
-        self.save_corpus_button.visible = self.show_save_options
+    def get_corpus_dict(self) -> dict[str, DataFrameCorpus]:
+        return self.corpus_loader.get_corpora()
 
-        if self.show_save_options:
-            self.toggle_save_options_button.name = 'Hide save options'
-            self.toggle_save_options_button.button_style = 'solid'
+    def set_selected_corpus(self, corpus: Optional[DataFrameCorpus]):
+        if corpus == self.corpus:
+            # Prevents endless recursive loop through update_displays()
+            return
+        elif corpus is None:
+            self.corpus = None
+            self.corpus_df = None
+            self.annotations = None
         else:
-            self.toggle_save_options_button.name = 'Show save options'
-            self.toggle_save_options_button.button_style = 'outline'
-
-    def _toggle_save_options(self, *_):
-        self.show_save_options = not self.show_save_options
-        self._set_save_options()
-
-    def _reset_save_options(self):
-        self.show_save_options = False
-        self._set_save_options()
-        self.category_col_name_input.value = ''
-        self.corpus_name_input.value = ''
-
-    def _update_corpus_list(self, *_):
-        corpus_options: dict[str, DataFrameCorpus] = self.corpus_loader.get_corpora()
-        self.corpus_selector.options = corpus_options
-        if len(corpus_options) == 1:
-            self.corpus_selector.value = list(corpus_options.values())[0]
-
-    def _update_selected_corpus(self, *_):
-        corpus: DataFrameCorpus = self.corpus_selector.value
-        self.corpus_df = corpus.docs().to_frame().reset_index(drop=True)
-        self.corpus_df[self.DEFAULT_CATEGORIES_COL] = DefaultCategoryMarker()
-        self.corpus_df.index = range(1, len(self.corpus_df) + 1)
+            self.corpus = corpus
+            self.corpus_df = corpus.to_dataframe().reset_index(drop=True)
+            self.corpus_df.index = range(1, len(self.corpus) + 1)
+            self.annotations = Series(len(self.corpus) * [DefaultCategoryMarker()])
+            self.annotations.index = range(1, len(self.corpus) + 1)
         self.curr_document_idx = self.MIN_DOCUMENT_IDX
-        self._reset_save_options()
         self.update_displays()
 
-    def _get_new_column_name(self, existing_columns: set[str]):
+    def _get_new_column_name(self, provided_name: str, existing_columns: set[str]) -> str:
         iteration: int = 0
-        new_col_name: str = self.DEFAULT_CATEGORIES_COL
-        while new_col_name in existing_columns:
-            new_col_name = f"{self.DEFAULT_CATEGORIES_COL}_{iteration}"
+        if len(provided_name) == 0:
+            provided_name = self.DEFAULT_CATEGORIES_COL
+        while provided_name in existing_columns:
+            provided_name = f"{provided_name}_{iteration}"
             iteration += 1
 
-        return new_col_name
+        return provided_name
 
     def _resolve_categories(self, categories: Union[list[str], DefaultCategoryMarker],
                             default_categories_str: str) -> str:
         try:
-            self.log(f"Resolved categories: {categories} into {','.join(categories)}", logging.DEBUG)
             return ','.join(categories)
         except TypeError:
-            self.log(f"Resolved categories: {categories} into {default_categories_str}", logging.DEBUG)
             return default_categories_str
 
-    def _save_as_corpus(self, *_):
-        corpus: Optional[DataFrameCorpus] = self.corpus_selector.value
-        corpus_df: Optional[DataFrame] = self.corpus_df
-        if (corpus is None) or (corpus_df is None):
+    def save_as_corpus(self, new_name: str, selected_meta: str, overwrite_meta: bool):
+        if self.corpus is None:
             self.display_warning("No corpus selected")
             return
-        new_name: Optional[str] = self.corpus_name_input.value
         if len(new_name) == 0:
             new_name = None
-        mask: Series[bool] = Series([True]*len(corpus_df))
-        new_corpus: DataFrameCorpus = corpus.cloned(mask, name=new_name)
-
-        category_col_name: str = self._get_new_column_name(set(corpus.metas))
-        default_categories_str: str = ','.join(self.get_default_categories())
-        category_col: Series[str] = corpus_df[self.DEFAULT_CATEGORIES_COL].apply(self._resolve_categories, args=(default_categories_str,))
-        category_col = category_col.astype(str).reset_index(drop=True)
-        self.log(f"New corpus created with annotation column: {category_col}", logging.DEBUG)
-        new_corpus.add_meta(category_col, name=category_col_name)
+        mask: Series[bool] = Series([True]*len(self.corpus))
+        new_corpus: DataFrameCorpus = self.corpus.cloned(mask, name=new_name)
+        default_categories_str: str = self.get_default_category() if self.get_default_category() else ''
+        annotations_col: Series[str] = self.annotations.apply(self._resolve_categories, args=(default_categories_str,)).reset_index(drop=True)
+        if overwrite_meta:
+            orig_col: Series = new_corpus[selected_meta]
+            annotations_col.fillna(orig_col)
+            new_corpus.remove_meta(selected_meta)
+        annotations_col = annotations_col.astype('category')
+        annotations_col_name: str = self._get_new_column_name(selected_meta, set(self.corpus.metas))
+        new_corpus.add_meta(annotations_col, name=annotations_col_name)
 
         corpora = self.corpus_loader.get_mutable_corpora()
         corpora.add(new_corpus)
         self.corpus_loader.trigger_event("update")
 
-        self._reset_save_options()
         self.display_success(f'Saved corpus as {new_name}')
 
-    # DocumentDisplay methods
+    # MetaDisplay methods
 
-    def get_curr_document_text(self) -> str:
-        document_text: str = ""
-        if self.corpus_df is not None:
-            document_text = self.corpus_df.at[self.curr_document_idx, self.DOC_COL]
+    def get_all_metas(self) -> list[str]:
+        if self.corpus is None:
+            return []
+        return [self.corpus._COL_DOC] + self.corpus.metas
 
-        return document_text
+    def get_curr_meta_str(self, meta: str) -> str:
+        if (self.corpus is None) or (meta not in self.get_all_metas()):
+            return ""
+        return str(self.corpus_df.at[self.curr_document_idx, meta])
 
-    # CategoryControls methods
+    # SettingsControls methods
 
     def add_category(self, category: str):
         if category in self.categories:
             self.display_warning("This category has already been added")
+            return
+        if len(category) == 0:
+            self.display_warning("Category cannot be empty")
             return
         self.categories.append(category)
         self.log(f"Category added: {category}", logging.DEBUG)
@@ -206,32 +173,32 @@ class Annotator(pn.viewable.Viewer):
         return self.curr_document_idx
 
     def get_min_document_idx(self) -> int:
-        if self.corpus_df is None:
+        if self.annotations is None:
             return self.MIN_DOCUMENT_IDX
-        return self.corpus_df.index.min()
+        return self.annotations.index.min()
 
     def get_max_document_idx(self) -> int:
-        if self.corpus_df is None:
+        if self.annotations is None:
             return self.MIN_DOCUMENT_IDX
-        return self.corpus_df.index.max()
+        return self.annotations.index.max()
 
     def get_all_categories(self) -> list[str]:
         return self.categories.copy()
 
-    def get_default_categories(self) -> list[str]:
-        return self.default_categories.copy()
+    def get_default_category(self) -> Optional[str]:
+        return self.default_category
 
-    def get_document_categories(self, document_idx: int) -> list[str]:
-        if self.corpus_df is None:
-            return []
-        categories: Union[list[str], DefaultCategoryMarker] = self.corpus_df.at[document_idx, self.DEFAULT_CATEGORIES_COL]
-        if isinstance(categories, DefaultCategoryMarker):
-            return self.get_default_categories()
+    def get_document_category(self, document_idx: int) -> str:
+        if self.annotations is None:
+            return ''
+        category: str | DefaultCategoryMarker = self.annotations.at[document_idx]
+        if isinstance(category, DefaultCategoryMarker):
+            return self.get_default_category()
         else:
-            return categories.copy()
+            return category
 
-    def get_curr_categories(self) -> list[str]:
-        return self.get_document_categories(self.curr_document_idx)
+    def get_curr_category(self) -> str:
+        return self.get_document_category(self.curr_document_idx)
 
     def set_curr_document_idx(self, new_document_idx: int):
         new_document_idx = min(new_document_idx, self.get_max_document_idx())
@@ -247,13 +214,12 @@ class Annotator(pn.viewable.Viewer):
     def prev_document(self):
         self.set_curr_document_idx(self.curr_document_idx - 1)
 
-    def set_curr_categories(self, categories: list[str]):
-        if self.corpus_df is None:
+    def set_curr_category(self, category: str):
+        if self.annotations is None:
             return
-        self.corpus_df.at[self.curr_document_idx, self.DEFAULT_CATEGORIES_COL] = categories.copy()
+        self.annotations.at[self.curr_document_idx] = category
+        self.log(f"Set category for document {self.curr_document_idx} to {category}", logging.DEBUG)
 
-        self.log(f"Set categories for document {self.curr_document_idx} to {categories}", logging.DEBUG)
-
-    def set_default_categories(self, categories: list[str]):
-        self.default_categories = categories.copy()
-        self.log(f"Set default categories to {categories}", logging.DEBUG)
+    def set_default_category(self, category: str):
+        self.default_category = category
+        self.log(f"Set default category to {category}", logging.DEBUG)
