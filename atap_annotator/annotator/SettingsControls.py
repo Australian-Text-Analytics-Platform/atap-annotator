@@ -73,6 +73,7 @@ class SettingsControls:
         self.controller.set_selected_corpus(self.corpus_selector.value)
         meta_cols: list[str] = [self.new_meta_col] + self.controller.get_categorical_metas()
         self.meta_col_select.options = meta_cols
+        self.meta_col_select.value = self.new_meta_col
 
     def _update_selected_meta_col(self, *_):
         selected_col: str = self.meta_col_select.value

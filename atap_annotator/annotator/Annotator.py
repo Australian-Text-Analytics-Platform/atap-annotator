@@ -2,6 +2,7 @@ import logging
 import traceback
 from typing import Optional
 
+import pandas as pd
 import panel as pn
 from atap_corpus.corpus.corpus import DataFrameCorpus
 from atap_corpus_loader import CorpusLoader
@@ -118,7 +119,7 @@ class Annotator(pn.viewable.Viewer):
     def _unresolve_annotations_col(self, annotations_col: Series) -> Series:
         # Converts a column from the corpus to an annotations Series
         def unresolver(x):
-            if x is None:
+            if (x is None) or (pd.isna(x)):
                 return None
             elif len(x) == 0:
                 return DefaultCategoryMarker()
@@ -131,8 +132,12 @@ class Annotator(pn.viewable.Viewer):
             return
         if len(new_name) == 0:
             new_name = None
-        mask: Series[bool] = Series([True]*len(self.corpus))
-        new_corpus: DataFrameCorpus = self.corpus.cloned(mask, name=new_name)
+        mask: Series = Series([True]*len(self.corpus))
+        cloned_corpus: DataFrameCorpus = self.corpus.cloned(mask, new_name)
+        new_name = cloned_corpus.name
+        new_corpus: DataFrameCorpus = cloned_corpus.detached()
+        del cloned_corpus
+        new_corpus.rename(new_name)
         annotations_col: Series = self._resolve_annotations_col(self.annotations)
         if overwrite_meta:
             orig_col: Series = new_corpus[selected_meta]
