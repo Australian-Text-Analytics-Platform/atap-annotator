@@ -29,7 +29,7 @@ class SettingsControls:
                                  self.overwrite_meta_checkbox)
 
         # Category controls
-        self.category_input = TextInput(name='Category', width=150)
+        self.category_input = TextInput(name='Category', width=self.STANDARD_WIDTH)
         self.add_category_button = Button(
             name="Add category",
             button_type="success", button_style="solid",
@@ -38,7 +38,8 @@ class SettingsControls:
         self.remove_category_buttons = FlexBox()
         category_inputs = Column(self.category_input,
                                  self.add_category_button,
-                                 self.remove_category_buttons)
+                                 self.remove_category_buttons,
+                                 width=self.STANDARD_WIDTH)
 
         self.panel = Row(corpus_controls, column_controls, category_inputs)
 
@@ -70,7 +71,7 @@ class SettingsControls:
 
     def _update_selected_corpus(self, *_):
         self.controller.set_selected_corpus(self.corpus_selector.value)
-        meta_cols: list[str] = [self.new_meta_col] + self.controller.get_all_metas()
+        meta_cols: list[str] = [self.new_meta_col] + self.controller.get_categorical_metas()
         self.meta_col_select.options = meta_cols
 
     def _update_selected_meta_col(self, *_):
@@ -80,6 +81,8 @@ class SettingsControls:
         self.overwrite_meta_checkbox.disabled = no_col_selected
         if no_col_selected:
             self.overwrite_meta_checkbox.value = False
+        else:
+            self.controller.set_annotated_meta_col(selected_col)
 
     def _add_category(self, *_):
         category: str = self.category_input.value_input
@@ -97,7 +100,7 @@ class SettingsControls:
         corpus_name: str = self.corpus_name_input.value
         keep_original_meta: str = self.overwrite_meta_checkbox.value
         selected_col: str = self.meta_col_select.value
-        if selected_col is None:
+        if selected_col == self.new_meta_col:
             selected_col = self.meta_col_name_input.value
 
         self.controller.save_as_corpus(corpus_name, selected_col, keep_original_meta)

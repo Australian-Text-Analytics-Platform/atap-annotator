@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Union
+import traceback
+from typing import Optional
 
 import panel as pn
 from atap_corpus.corpus.corpus import DataFrameCorpus
@@ -94,6 +95,7 @@ class Annotator(pn.viewable.Viewer):
             self.corpus_df.index = range(1, len(self.corpus) + 1)
             self.annotations = Series(len(self.corpus) * [DefaultCategoryMarker()])
             self.annotations.index = range(1, len(self.corpus) + 1)
+            self.default_category = None
         self.curr_document_idx = self.MIN_DOCUMENT_IDX
         self.update_displays()
 
@@ -107,12 +109,21 @@ class Annotator(pn.viewable.Viewer):
 
         return provided_name
 
-    def _resolve_categories(self, categories: Union[list[str], DefaultCategoryMarker],
-                            default_categories_str: str) -> str:
-        try:
-            return ','.join(categories)
-        except TypeError:
-            return default_categories_str
+    def _resolve_annotations_col(self, annotations_col: Series) -> Series:
+        # Converts an annotations Series to a column to be included in a corpus
+        def resolver(x):
+            return str(x) if x else None
+        return annotations_col.apply(resolver).reset_index(drop=True)
+
+    def _unresolve_annotations_col(self, annotations_col: Series) -> Series:
+        # Converts a column from the corpus to an annotations Series
+        def unresolver(x):
+            if x is None:
+                return None
+            elif len(x) == 0:
+                return DefaultCategoryMarker()
+            return str(x)
+        return annotations_col.apply(unresolver).reset_index(drop=True)
 
     def save_as_corpus(self, new_name: str, selected_meta: str, overwrite_meta: bool):
         if self.corpus is None:
@@ -122,8 +133,7 @@ class Annotator(pn.viewable.Viewer):
             new_name = None
         mask: Series[bool] = Series([True]*len(self.corpus))
         new_corpus: DataFrameCorpus = self.corpus.cloned(mask, name=new_name)
-        default_categories_str: str = self.get_default_category() if self.get_default_category() else ''
-        annotations_col: Series[str] = self.annotations.apply(self._resolve_categories, args=(default_categories_str,)).reset_index(drop=True)
+        annotations_col: Series = self._resolve_annotations_col(self.annotations)
         if overwrite_meta:
             orig_col: Series = new_corpus[selected_meta]
             annotations_col.fillna(orig_col)
@@ -167,6 +177,25 @@ class Annotator(pn.viewable.Viewer):
             self.categories.remove(category)
             self.log(f"Category removed: {category}", logging.DEBUG)
 
+    def get_categorical_metas(self) -> list[str]:
+        if self.corpus is None:
+            return []
+        return self.corpus_df.select_dtypes(include='category').columns.tolist()
+
+    def set_annotated_meta_col(self, meta: str):
+        try:
+            if (self.corpus_df is None) or (meta not in self.corpus_df.columns):
+                return
+            metas: list[str] = self.corpus_df.select_dtypes(include='category').columns.tolist()
+            if meta not in metas:
+                return
+            self.annotations = self._unresolve_annotations_col(self.corpus_df[meta])
+            self.categories = [x for x in self.annotations.unique() if isinstance(x, str)]
+            self.log(','.join([f"{c}:{type(c)}" for c in self.categories]), logging.DEBUG)
+            self.update_displays()
+        except Exception as e:
+            self.log(traceback.format_exc(), logging.DEBUG)
+
     # Navigator methods
 
     def get_curr_document_idx(self) -> int:
@@ -188,16 +217,16 @@ class Annotator(pn.viewable.Viewer):
     def get_default_category(self) -> Optional[str]:
         return self.default_category
 
-    def get_document_category(self, document_idx: int) -> str:
+    def get_document_category(self, document_idx: int) -> Optional[str]:
         if self.annotations is None:
             return ''
-        category: str | DefaultCategoryMarker = self.annotations.at[document_idx]
+        category = self.annotations.at[document_idx]
         if isinstance(category, DefaultCategoryMarker):
             return self.get_default_category()
         else:
             return category
 
-    def get_curr_category(self) -> str:
+    def get_curr_category(self) -> Optional[str]:
         return self.get_document_category(self.curr_document_idx)
 
     def set_curr_document_idx(self, new_document_idx: int):
