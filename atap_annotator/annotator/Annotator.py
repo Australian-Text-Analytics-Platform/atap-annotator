@@ -124,7 +124,10 @@ class Annotator(pn.viewable.Viewer):
             elif len(x) == 0:
                 return DefaultCategoryMarker()
             return str(x)
-        return annotations_col.apply(unresolver).reset_index(drop=True)
+        annotations_col = annotations_col.apply(unresolver)
+        annotations_col.index = range(1, len(annotations_col) + 1)
+
+        return annotations_col
 
     def save_as_corpus(self, new_name: str, selected_meta: str, overwrite_meta: bool):
         if self.corpus is None:
